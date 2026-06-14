@@ -284,6 +284,14 @@ function handleIncomingMessage(msg, topic) {
         return;
     }
 
+    if (msg.type === 'RESET_SYSTEM') {
+        // Clear all relevant local storage
+        ['totalPoints', 'studyHistory', 'rewardHistory', 'currentTimerState', 'rewardsConfig'].forEach(key => SafeStorage.removeItem(key));
+        alert('【系统通知】守护者已一键重置了系统全站数据，网页将重新加载！');
+        location.reload();
+        return;
+    }
+
     if (currentRole === 'girl') {
         if (msg.type === 'CHEER') {
             showToast("💌 守护者向你发送了：" + msg.action);
@@ -1291,7 +1299,26 @@ if (adminPointBtn) {
     });
 }
 
-const adminRewardBtn = document.getElementById('admin-reward-btn');
+    const adminRewardBtn = document.getElementById('admin-reward-btn');
+    const adminResetBtn = document.getElementById('admin-reset-btn');
+
+    if (adminResetBtn) {
+        adminResetBtn.addEventListener('click', () => {
+            if (currentRole !== 'boy') return;
+            if (confirm('💣 危险操作确认 💣\n\n你确定要清空全站所有数据吗？\n包括积分、所有学习记录、心愿池和上架的商品！\n如果聪聪在线，她的数据也会被强制清空！\n\n确认吗？')) {
+                // Clear own local storage
+                ['totalPoints', 'studyHistory', 'rewardHistory', 'currentTimerState', 'rewardsConfig'].forEach(key => SafeStorage.removeItem(key));
+                // Broadcast reset event to everyone else
+                const msg = { type: 'RESET_SYSTEM' };
+                mqttPublish(TOPIC_EVENTS, msg, false); // Send it live
+                // Clear retained state for the girl by sending an empty config and empty state
+                mqttPublish(TOPIC_CONFIG, { type: 'SYNC_CONFIG', rewards: [] }, true);
+                // Reload self
+                alert('全站数据已清空。');
+                location.reload();
+            }
+        });
+    }
 
 // 支持直接粘贴截图/图片文件，自动压缩为 Base64
 const adminRewardIconInput = document.getElementById('admin-reward-icon');
