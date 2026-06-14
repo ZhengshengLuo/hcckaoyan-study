@@ -808,7 +808,12 @@ function renderRewardsFromConfig(rewardsArray) {
     currentRewardsConfig = rewardsArray;
     SafeStorage.setItem('rewardsConfig', JSON.stringify(rewardsArray));
     
-    const grid = document.querySelector('.rewards-grid');
+    let grid;
+    if (currentRole === 'boy') {
+        grid = document.getElementById('admin-rewards-grid');
+    } else {
+        grid = document.querySelector('.rewards-grid');
+    }
     if (!grid) return;
     
     grid.innerHTML = '';
@@ -841,9 +846,9 @@ function renderRewardsFromConfig(rewardsArray) {
         }
 
         div.innerHTML = `
-            <div class="reward-icon" style="display:flex; align-items:center; justify-content:center; height: 80px; margin-bottom: 10px;">${iconHtml}</div>
-            <h3>${safeName.innerHTML}</h3>
-            <p>${reward.cost} 积分</p>
+            <div class="reward-icon" style="display:flex; align-items:center; justify-content:center; height: 50px; margin-bottom: 5px; font-size: 1.5rem;">${iconHtml}</div>
+            <h3 style="font-size: 0.9rem; margin-bottom: 5px;">${safeName.innerHTML}</h3>
+            <p style="font-size: 0.8rem;">${reward.cost} 积分</p>
             ${btnHtml}
         `;
         

@@ -232,6 +232,13 @@
                                         <button id="admin-reward-btn" class="btn primary sm" style="background: #6c5ce7; border-color: #6c5ce7; flex-shrink: 0;">上架</button>
                                     </div>
                                 </div>
+                                <div style="margin-top: 15px; border-top: 1px dashed rgba(108, 92, 231, 0.3); padding-top: 15px;">
+                                    <h6 style="color: #6c5ce7; margin-bottom: 10px;">👇 已上架的商品 (点击可下架)</h6>
+                                    <!-- 共享类名 rewards-grid，方便复用渲染逻辑，但如果由于 querySelector 冲突，我们会改用 admin-rewards-grid -->
+                                    <div id="admin-rewards-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px;">
+                                        <!-- admin rewards will be rendered here -->
+                                    </div>
+                                </div>
                             </div>
                             <!-- 系统重置 -->
                             <div style="padding: 15px; border: 1px dashed rgba(255, 107, 129, 0.5); border-radius: 10px; background: rgba(255,107,129,0.05); display: flex; flex-direction: column; justify-content: center; align-items: center;">
@@ -263,6 +270,6 @@
         document.write('<script src="https://cdn.jsdelivr.net/npm/mqtt@5.8.1/dist/mqtt.min.js"><\/script>');
     }
     </script>
-    <script src="./app.js?v=34"></script>
+    <script src="./app.js?v=35"></script>
 </body>
 </html>
