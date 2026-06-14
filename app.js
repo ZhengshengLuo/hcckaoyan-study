@@ -96,6 +96,9 @@ function applyRoleConstraints() {
         nameText.innerText = "👀 默默守护中...";
         document.querySelector('.nav-btn[data-target="dashboard-view"]').click();
     }
+    
+    // Re-render rewards to apply role-specific buttons (delete vs redeem)
+    renderRewardsFromConfig(currentRewardsConfig);
 }
 
 // ==========================================
