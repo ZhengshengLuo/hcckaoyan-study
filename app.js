@@ -29,6 +29,16 @@ function initRoleUI() {
         document.querySelectorAll('.role-card').forEach(card => {
             card.addEventListener('click', () => {
                 const selected = card.getAttribute('data-role');
+                
+                // Add password protection for Guardian (Boy) role
+                if (selected === 'boy') {
+                    const pwd = prompt('请输入守护者专属密码：');
+                    if (pwd !== '5201314') {
+                        alert('密码错误！你不是我的守护者哼！');
+                        return;
+                    }
+                }
+                
                 currentRole = selected;
                 try { sessionStorage.setItem('userRole', currentRole); } catch(e) { window._tabRole = currentRole; }
                 overlay.style.opacity = '0';
@@ -138,9 +148,12 @@ const MQTT_BROKERS = [
     "wss://public.mqtthq.com:8084/mqtt",
     "wss://test.mosquitto.org:8081/mqtt"
 ];
-// Bug #12 fix: Use a stored room code for privacy. Both devices must share the same code.
-// Users can change it via: localStorage.setItem('mqttRoom', 'your_custom_code')
-const MQTT_TOPIC = "cspin_study_" + (SafeStorage.getItem('mqttRoom') || 'love_9527');
+// Secret topics for two-player sync
+const SECRET_BASE_TOPIC = "cspin_study_hcc_zsl_8f9a2b_v2";
+const TOPIC_STATE = SECRET_BASE_TOPIC + "/state";
+const TOPIC_CONFIG = SECRET_BASE_TOPIC + "/config";
+const TOPIC_EVENTS = SECRET_BASE_TOPIC + "/events";
+
 let mqttClient = null;
 let mqttClientId = null;
 let mqttConnected = false;
@@ -164,11 +177,9 @@ function initMQTT(brokerIndex) {
     var brokerUrl = MQTT_BROKERS[brokerIndex];
     mqttClientId = 'cspin_' + currentRole + '_' + Math.random().toString(36).substring(2, 8);
     
-    showToast('🔄 正在连接同步服务器(' + (brokerIndex + 1) + '/' + MQTT_BROKERS.length + ')...', 3000);
-    console.log("[MQTT] Trying broker:", brokerUrl);
+    showToast('🔄 正在连接同步服务器...', 3000);
     
     try {
-        // Clean up previous failed client
         if (mqttClient) {
             try { mqttClient.end(true); } catch(e) {}
             mqttClient = null;
@@ -181,15 +192,12 @@ function initMQTT(brokerIndex) {
             keepalive: 30
         });
     } catch (e) {
-        console.error("[MQTT] Connect failed:", e);
-        // Try next broker
         setTimeout(function() { initMQTT(brokerIndex + 1); }, 500);
         return;
     }
     
     var connectTimeout = setTimeout(function() {
         if (!mqttConnected) {
-            console.warn("[MQTT] Timeout on broker:", brokerUrl);
             try { mqttClient.end(true); } catch(e) {}
             mqttClient = null;
             initMQTT(brokerIndex + 1);
@@ -199,53 +207,39 @@ function initMQTT(brokerIndex) {
     mqttClient.on('connect', function() {
         clearTimeout(connectTimeout);
         mqttConnected = true;
-        console.log("[MQTT] Connected! broker=" + brokerUrl + " clientId=" + mqttClientId);
-        showToast('✅ 同步服务器已连接！跨设备同步已就绪', 3000);
+        showToast('✅ 云端已连接！', 3000);
         updateMqttStatusUI(true);
-        mqttClient.subscribe(MQTT_TOPIC);
         
-        if (currentRole === 'boy') {
-            mqttPublish({ type: 'REQ_SYNC' });
-        } else if (currentRole === 'girl') {
-            broadcastFullSync();
+        mqttClient.subscribe(TOPIC_STATE);
+        mqttClient.subscribe(TOPIC_CONFIG);
+        mqttClient.subscribe(TOPIC_EVENTS);
+        
+        if (currentRole === 'girl') {
+            publishState();
         }
     });
 
-    mqttClient.on('reconnect', function() {
-        console.log("[MQTT] Reconnecting...");
-        updateMqttStatusUI(false, '重连中...');
-    });
-
-    mqttClient.on('offline', function() {
-        mqttConnected = false;
-        console.log("[MQTT] Offline");
-        updateMqttStatusUI(false, '离线');
-    });
-
-    mqttClient.on('error', function(err) {
-        console.error("[MQTT] Error:", err.message || err);
-        updateMqttStatusUI(false, '错误');
-    });
+    mqttClient.on('reconnect', function() { updateMqttStatusUI(false, '重连中...'); });
+    mqttClient.on('offline', function() { mqttConnected = false; updateMqttStatusUI(false, '离线'); });
+    mqttClient.on('error', function(err) { updateMqttStatusUI(false, '错误'); });
     
-    mqttClient.on('message', function(topic, message) {
+    mqttClient.on('message', function(topic, message, packet) {
         try {
-            var msg = JSON.parse(message.toString());
-            if (msg.from === mqttClientId) return; // skip own messages
-            console.log("[MQTT] Received:", msg.type, "from:", msg.from);
-            handleIncomingMessage(msg);
+            const msg = JSON.parse(message.toString());
+            // Ignore messages from self, unless they are explicitly retained sync messages
+            if (msg.from === mqttClientId && !packet.retain) return; 
+            handleIncomingMessage(msg, topic);
         } catch (e) {
             console.error("[MQTT] Parse error:", e);
         }
     });
 }
 
-function mqttPublish(msg) {
+function mqttPublish(topic, msg, retain = false) {
     if (mqttClient && mqttConnected) {
         msg.from = mqttClientId;
-        mqttClient.publish(MQTT_TOPIC, JSON.stringify(msg));
-        console.log("[MQTT] Sent:", msg.type);
-    } else {
-        console.warn("[MQTT] Cannot publish, not connected. mqttClient:", !!mqttClient, "connected:", mqttConnected);
+        mqttClient.publish(topic, JSON.stringify(msg), { retain: retain });
+        console.log("[MQTT] Sent to", topic, ":", msg.type);
     }
 }
 
@@ -268,76 +262,44 @@ function initAllChannels() {
     initLocalChannel();
     initMQTT();
     
-    // --- localStorage 'storage' event (cross-tab fallback, works even on file://) ---
-    try {
-        window.addEventListener('storage', function(e) {
-            if (currentRole === 'boy') {
-                // Girl updated data in another tab → re-read everything
-                if (e.key === 'totalPoints' || e.key === 'studyHistory' || e.key === 'rewardHistory' || e.key === 'currentTimerState') {
-                    console.log("[STORAGE] Detected change:", e.key);
-                    currentPoints = parseInt(SafeStorage.getItem('totalPoints') || '120');
-                    studyHistory = JSON.parse(SafeStorage.getItem('studyHistory') || '[]');
-                    rewardHistory = JSON.parse(SafeStorage.getItem('rewardHistory') || '[]');
-                    currentTimerState = SafeStorage.getItem('currentTimerState') || '休息中';
-                    document.getElementById('points-display').innerText = currentPoints;
-                    updateRemoteStatus(currentTimerState);
-                    renderDashboard(studyHistory, rewardHistory);
-                }
-            }
-        });
-    } catch(e) {
-        console.warn("[STORAGE] storage event not available:", e);
-    }
-    
-    // --- Periodic poll as ultimate fallback (for file:// where storage events may not fire) ---
     if (currentRole === 'boy') {
-        setInterval(function() {
-            var latestState = SafeStorage.getItem('currentTimerState') || '休息中';
-            if (latestState !== currentTimerState) {
-                console.log("[POLL] Timer state changed:", latestState);
-                currentTimerState = latestState;
-                currentPoints = parseInt(SafeStorage.getItem('totalPoints') || '120');
-                studyHistory = JSON.parse(SafeStorage.getItem('studyHistory') || '[]');
-                rewardHistory = JSON.parse(SafeStorage.getItem('rewardHistory') || '[]');
-                document.getElementById('points-display').innerText = currentPoints;
-                updateRemoteStatus(currentTimerState);
-                renderDashboard(studyHistory, rewardHistory);
-            }
-        }, 2000); // Check every 2 seconds
-    }
-    
-    // Boy: render dashboard with local data immediately
-    if (currentRole === 'boy') {
-        // Also read shared data from localStorage (girl may have written it)
         currentPoints = parseInt(SafeStorage.getItem('totalPoints') || '120');
         studyHistory = JSON.parse(SafeStorage.getItem('studyHistory') || '[]');
         rewardHistory = JSON.parse(SafeStorage.getItem('rewardHistory') || '[]');
         currentTimerState = SafeStorage.getItem('currentTimerState') || '休息中';
         document.getElementById('points-display').innerText = currentPoints;
         updateRemoteStatus(currentTimerState);
-        // Delay rendering slightly to ensure dashboard canvas is visible
         setTimeout(() => renderDashboard(studyHistory, rewardHistory), 150);
     }
-    
-    // Girl: announce presence
-    if (currentRole === 'girl') {
-        broadcastFullSync();
-    }
-}
-
-// --- Unified message broadcast (sends on BOTH channels) ---
-function broadcastToAll(msg) {
-    localBroadcast(msg);
-    mqttPublish(msg);
 }
 
 // --- Unified message handler ---
-function handleIncomingMessage(msg) {
+function handleIncomingMessage(msg, topic) {
+    // Both roles can receive config updates
+    if (msg.type === 'SYNC_CONFIG') {
+        renderRewardsFromConfig(msg.rewards);
+        return;
+    }
+
     if (currentRole === 'girl') {
-        if (msg.type === 'REQ_SYNC') {
-            broadcastFullSync();
-        } else if (msg.type === 'CHEER') {
+        if (msg.type === 'CHEER') {
             showToast("💌 守护者向你发送了：" + msg.action);
+        } else if (msg.type === 'SYNC_DATA') {
+            // Boy might have adjusted points
+            currentPoints = msg.points;
+            SafeStorage.setItem('totalPoints', currentPoints);
+            document.getElementById('points-display').innerText = currentPoints;
+            
+            // Sync reward history (to handle boy fulfilling items)
+            if (msg.rewardHistory) {
+                rewardHistory = msg.rewardHistory;
+                SafeStorage.setItem('rewardHistory', JSON.stringify(rewardHistory));
+                if (typeof renderRewardHistoryUI === 'function') {
+                    renderRewardHistoryUI(rewardHistory);
+                }
+            }
+
+            if(msg.actionMsg) showToast(msg.actionMsg);
         }
     } else if (currentRole === 'boy') {
         if (msg.type === 'SYNC_DATA') {
@@ -354,36 +316,56 @@ function handleIncomingMessage(msg) {
             document.getElementById('points-display').innerText = currentPoints;
             updateRemoteStatus(msg.status);
             renderDashboard(studyHistory, rewardHistory);
-            showToast('📡 收到她的最新数据！', 2000);
             
         } else if (msg.type === 'STATUS_CHANGE') {
+            const oldBase = (currentTimerState || '').split('|')[0];
+            const newBase = msg.status.split('|')[0];
+            
             currentTimerState = msg.status;
             SafeStorage.setItem('currentTimerState', currentTimerState);
             updateRemoteStatus(msg.status);
-            showToast('💡 她的状态更新了：' + (msg.status.includes('studying') ? '正在学习' : msg.status.includes('paused') ? '暂停休息' : '结束学习'), 2000);
+            
+            if (oldBase !== newBase) {
+                showToast('💡 她的状态更新了：' + (msg.status.includes('studying') ? '正在学习' : msg.status.includes('paused') ? '暂停休息' : '结束学习'), 2000);
+            }
         }
     }
 }
 
-// --- Girl broadcasts her full state ---
-function broadcastFullSync() {
-    if (currentRole !== 'girl') return;
+// --- State Publishers (MQTT Retain) ---
+function publishState(actionMsg = null) {
     const msg = {
         type: 'SYNC_DATA',
         points: currentPoints,
         studyHistory: studyHistory,
         rewardHistory: rewardHistory,
-        status: currentTimerState
+        status: currentTimerState,
+        actionMsg: actionMsg
     };
-    broadcastToAll(msg);
+    localBroadcast(msg);
+    mqttPublish(TOPIC_STATE, msg, true); // RETAIN = TRUE
 }
 
-// --- Girl broadcasts a status change ---
+function publishConfig(rewardsArray) {
+    const msg = {
+        type: 'SYNC_CONFIG',
+        rewards: rewardsArray
+    };
+    localBroadcast(msg);
+    mqttPublish(TOPIC_CONFIG, msg, true); // RETAIN = TRUE
+}
+
+function broadcastEvent(msg) {
+    localBroadcast(msg);
+    mqttPublish(TOPIC_EVENTS, msg, false);
+}
+
+// --- Status updates ---
 function broadcastStatus(statusName) {
     currentTimerState = statusName;
     SafeStorage.setItem('currentTimerState', statusName);
     if (currentRole === 'girl') {
-        broadcastToAll({ type: 'STATUS_CHANGE', status: statusName });
+        broadcastEvent({ type: 'STATUS_CHANGE', status: statusName });
     }
 }
 
@@ -423,7 +405,7 @@ function showToast(text, duration) {
 
     var toast = document.createElement('div');
     toast.id = 'app-toast';
-    toast.innerText = text;
+    toast.textContent = text;
     toast.style.cssText = 'position:fixed;top:30px;left:50%;transform:translateX(-50%);background:rgba(255,255,255,0.95);color:#5c4b51;padding:14px 28px;border-radius:20px;font-size:1rem;z-index:99999;box-shadow:0 8px 30px rgba(0,0,0,0.12);border:1px solid rgba(255,183,197,0.3);backdrop-filter:blur(10px);animation:toastIn 0.3s ease;';
     document.body.appendChild(toast);
     setTimeout(function() {
@@ -446,6 +428,8 @@ function showToast(text, duration) {
 
 let timerInterval;
 let secondsElapsed = 0;
+let lastVerifiedSeconds = 0; // 新增：最后一次通过验证的秒数
+let lastBroadcastTime = 0;
 let isRunning = false;
 let startTime;
 
@@ -453,8 +437,8 @@ let startTime;
 let quizScheduleTimeout;
 let quizActiveInterval;
 let quizFails = 0;
-const QUIZ_MIN_SEC = 15 * 60;  // 15 minutes
-const QUIZ_MAX_SEC = 30 * 60;  // 30 minutes
+const QUIZ_MIN_SEC = 5 * 60;  // 5 minutes (修改为正式时间)
+const QUIZ_MAX_SEC = 10 * 60; // 10 minutes (修改为正式时间)
 
 let originalTitle = document.title;
 let titleFlashInterval;
@@ -544,13 +528,28 @@ function handleQuizFail() {
     quizFails++;
     
     if (quizFails >= 2) {
-        showToast('⚠️ 连续2次未响应验证，专注已自动结束！', 5000);
-        broadcastToAll({ type: 'CHEER', action: '【系统警告】她连续2次未通过专注验证，自动结束了学习！' });
+        showToast('⚠️ 连续2次未响应验证，已强制结束并扣除10分！', 5000);
+        broadcastEvent({ type: 'CHEER', action: '【系统警告】她连续2次未通过专注验证，已自动结束并扣分！' });
+        
+        // 惩罚1: 未经验证的时间全部作废
+        secondsElapsed = lastVerifiedSeconds;
+        
+        // 惩罚2: 倒扣10分
+        currentPoints -= 10;
+        if (currentPoints < 0) currentPoints = 0;
+        SafeStorage.setItem('totalPoints', currentPoints);
+        document.getElementById('points-display').innerText = currentPoints;
+        
+        // 强制停止计时并结算
         stopBtn.click();
+        
+        // 同步给男生端 (带 retain)
+        publishState('【防作弊系统】检测到恶意挂机，已作废无效时长并扣除 10 积分！');
+        
         quizFails = 0;
     } else {
         showToast('⚠️ 未及时响应验证，已自动暂停专注！', 4000);
-        broadcastToAll({ type: 'CHEER', action: '【系统提示】她未及时响应验证，专注已暂停！' });
+        broadcastEvent({ type: 'CHEER', action: '【系统提示】她未及时响应验证，专注已暂停！' });
         pauseBtn.click();
     }
 }
@@ -560,6 +559,7 @@ document.getElementById('quiz-submit-btn').addEventListener('click', () => {
     stopAlerts();
     document.getElementById('quiz-overlay').style.display = 'none';
     quizFails = 0;
+    lastVerifiedSeconds = secondsElapsed; // 记录下当前通过验证的时间点
     showToast('✅ 验证通过，继续专注！', 2000);
     scheduleNextQuiz();
 });
@@ -597,17 +597,9 @@ function restoreTimerState() {
             if (savedState.isRunning && savedState.startTime) {
                 // Was running when page closed — resume with correct elapsed time
                 isRunning = true;
-                startTime = savedState.startTime;
-                secondsElapsed = Math.floor((Date.now() - startTime) / 1000);
+                startTime = Date.now() - (savedState.secondsElapsed * 1000);
                 
-                timerInterval = setInterval(() => {
-                    secondsElapsed = Math.floor((Date.now() - startTime) / 1000);
-                    updateDisplay();
-                    if (secondsElapsed % 3 === 0) {
-                        const subjectName = subjectSelect.options[subjectSelect.selectedIndex].text;
-                        broadcastStatus('studying: ' + subjectName + '|' + secondsElapsed);
-                    }
-                }, 1000);
+                timerInterval = setInterval(timerTick, 1000);
 
                 startBtn.classList.add('hidden');
                 pauseBtn.classList.remove('hidden');
@@ -639,6 +631,16 @@ function restoreTimerState() {
 // Use a persistent variable that always holds the "current" subject before any switch
 let _lastKnownSubject = subjectSelect.options[subjectSelect.selectedIndex].text;
 
+function timerTick() {
+    secondsElapsed = Math.floor((Date.now() - startTime) / 1000);
+    updateDisplay();
+    if (secondsElapsed - lastBroadcastTime >= 3) {
+        lastBroadcastTime = secondsElapsed;
+        const subjectName = subjectSelect.options[subjectSelect.selectedIndex].text;
+        broadcastStatus('studying: ' + subjectName + '|' + secondsElapsed);
+    }
+}
+
 // Bug #2 fix: Handle subject switch during active timer
 subjectSelect.addEventListener('change', () => {
     if (currentRole !== 'girl') return;
@@ -662,9 +664,11 @@ subjectSelect.addEventListener('change', () => {
                 duration_minutes: earnedMinutes,
                 created_at: new Date().toISOString()
             });
+            // Truncate history to prevent localStorage exhaustion
+            if (studyHistory.length > 500) studyHistory = studyHistory.slice(0, 500);
             SafeStorage.setItem('studyHistory', JSON.stringify(studyHistory));
             showToast('📝 已保存 ' + prevSubjectName + ' ' + earnedMinutes + ' 分钟，切换到新科目');
-            broadcastFullSync();
+            publishState();
         } else {
             showToast('📝 切换科目，重新开始计时');
         }
@@ -672,19 +676,14 @@ subjectSelect.addEventListener('change', () => {
         // Reset timer and restart for new subject
         clearInterval(timerInterval);
         secondsElapsed = 0;
+        lastBroadcastTime = 0;
+        lastVerifiedSeconds = 0; // 重置验证基准
         startTime = Date.now();
         updateDisplay();
         
         if (isRunning) {
             // Restart timer for new subject
-            timerInterval = setInterval(() => {
-                secondsElapsed = Math.floor((Date.now() - startTime) / 1000);
-                updateDisplay();
-                if (secondsElapsed % 3 === 0) {
-                    const newSubjectName = subjectSelect.options[subjectSelect.selectedIndex].text;
-                    broadcastStatus('studying: ' + newSubjectName + '|' + secondsElapsed);
-                }
-            }, 1000);
+            timerInterval = setInterval(timerTick, 1000);
             
             const newSubjectName = subjectSelect.options[subjectSelect.selectedIndex].text;
             broadcastStatus('studying: ' + newSubjectName + '|0');
@@ -703,6 +702,7 @@ startBtn.addEventListener('click', () => {
     
     isRunning = true;
     startTime = Date.now() - (secondsElapsed * 1000);
+    lastVerifiedSeconds = secondsElapsed; // 启动/恢复时重置验证基准
     
     timerInterval = setInterval(() => {
         secondsElapsed = Math.floor((Date.now() - startTime) / 1000);
@@ -766,7 +766,7 @@ stopBtn.addEventListener('click', () => {
         showToast('真棒！本次专注获得 ' + earnedPoints + ' 积分！');
         
         // 同步给男生
-        broadcastFullSync();
+        publishState();
     }
     
     secondsElapsed = 0;
@@ -788,38 +788,106 @@ stopBtn.addEventListener('click', () => {
 // ==========================================
 // 4. Rewards Logic
 // ==========================================
-document.querySelectorAll('.reward-card button').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-        if (currentRole !== 'girl') {
-            showToast('只有女孩才能兑换奖励哦！');
-            return;
-        }
-        const costText = e.target.previousElementSibling.innerText;
-        const rewardName = e.target.parentElement.querySelector('h3').innerText;
-        const cost = parseInt(costText.replace(/\D/g,''));
+let currentRewardsConfig = JSON.parse(SafeStorage.getItem('rewardsConfig') || '[]');
+if (currentRewardsConfig.length === 0) {
+    currentRewardsConfig = [];
+}
+
+function renderRewardsFromConfig(rewardsArray) {
+    currentRewardsConfig = rewardsArray;
+    SafeStorage.setItem('rewardsConfig', JSON.stringify(rewardsArray));
+    
+    const grid = document.querySelector('.rewards-grid');
+    if (!grid) return;
+    
+    grid.innerHTML = '';
+    rewardsArray.forEach(reward => {
+        let iconHtml = reward.icon;
         
-        if (currentPoints >= cost) {
-            currentPoints -= cost;
-            SafeStorage.setItem('totalPoints', currentPoints);
-            document.getElementById('points-display').innerText = currentPoints;
-            
-            // Save to reward history
-            rewardHistory.unshift({
-                reward_name: rewardName,
-                cost: cost,
-                created_at: new Date().toISOString()
-            });
-            SafeStorage.setItem('rewardHistory', JSON.stringify(rewardHistory));
-            
-            showToast('🎉 兑换成功！已经通知守护者准备买单啦~');
-            
-            // 同步给男生
-            broadcastFullSync();
-        } else {
-            showToast('积分不足，快去学习赚积分吧！');
+        // Parse markdown image: ![alt](url)
+        const mdMatch = reward.icon.match(/!\[.*?\]\((.*?)\)/);
+        let iconUrl = mdMatch ? mdMatch[1] : null;
+        
+        // Or direct URL
+        if (!iconUrl && (reward.icon.startsWith('http') || reward.icon.startsWith('data:image') || reward.icon.startsWith('/'))) {
+            iconUrl = reward.icon;
         }
+
+        if (iconUrl) {
+            iconHtml = `<img src="${iconUrl}" style="max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px;">`;
+        }
+
+        const div = document.createElement('div');
+        div.className = 'reward-card glass';
+        const safeName = document.createElement('div');
+        safeName.textContent = reward.name;
+        
+        let btnHtml = '';
+        if (currentRole === 'boy') {
+            btnHtml = `<button class="btn delete-btn sm" style="background: rgba(255,107,129,0.1); color: #ff6b81; border: 1px solid #ff6b81; margin-top:10px;">🗑️ 下架奖品</button>`;
+        } else {
+            btnHtml = `<button class="btn primary glass-btn sm redeem-btn">兑换</button>`;
+        }
+
+        div.innerHTML = `
+            <div class="reward-icon" style="display:flex; align-items:center; justify-content:center; height: 80px; margin-bottom: 10px;">${iconHtml}</div>
+            <h3>${safeName.innerHTML}</h3>
+            <p>${reward.cost} 积分</p>
+            ${btnHtml}
+        `;
+        
+        const actionBtn = div.querySelector('button');
+        actionBtn.addEventListener('click', () => {
+            if (currentRole === 'boy') {
+                // 下架逻辑
+                if (confirm('确定要下架奖品【' + reward.name + '】吗？')) {
+                    currentRewardsConfig = currentRewardsConfig.filter(r => r.name !== reward.name);
+                    SafeStorage.setItem('rewardsConfig', JSON.stringify(currentRewardsConfig));
+                    renderRewardsFromConfig(currentRewardsConfig);
+                    publishConfig(currentRewardsConfig);
+                    showToast('🗑️ 已成功下架：' + reward.name);
+                }
+                return;
+            }
+            
+            // 兑换逻辑 (Girls only)
+            if (currentRole !== 'girl') {
+                showToast('只有女孩才能兑换奖励哦！');
+                return;
+            }
+            if (currentPoints >= reward.cost) {
+                currentPoints -= reward.cost;
+                SafeStorage.setItem('totalPoints', currentPoints);
+                document.getElementById('points-display').innerText = currentPoints;
+                
+                rewardHistory.unshift({
+                    id: Date.now(),
+                    reward_name: reward.name,
+                    cost: reward.cost,
+                    created_at: new Date().toISOString(),
+                    fulfilled: false
+                });
+                SafeStorage.setItem('rewardHistory', JSON.stringify(rewardHistory));
+                
+                showToast('🎉 兑换成功！已经放入小金库等待他兑现啦~');
+                
+                // Update local UI immediately for girl
+                if (typeof renderRewardHistoryUI === 'function') {
+                    renderRewardHistoryUI(rewardHistory);
+                }
+                
+                // 同步给男生 (带 retain)
+                publishState('【兑换通知】她刚刚兑换了心愿：' + reward.name);
+            } else {
+                showToast('❌ 积分不足，快去学习赚积分吧！');
+            }
+        });
+        grid.appendChild(div);
     });
-});
+}
+
+// Initial render
+renderRewardsFromConfig(currentRewardsConfig);
 
 
 // ==========================================
@@ -991,18 +1059,58 @@ function renderDashboard(sHistory, rHistory) {
         }
     });
 
-    // Update reward history list
-    const list = document.getElementById('reward-history-list');
-    list.innerHTML = '';
-    if (rHistory && rHistory.length > 0) {
-        rHistory.slice(0, 5).forEach(row => {
+    // Update reward history list for both Boy and Girl
+    renderRewardHistoryUI(rHistory);
+}
+
+function renderRewardHistoryUI(rHistory) {
+    const boyList = document.getElementById('reward-history-list');
+    const girlList = document.getElementById('girl-reward-history-list');
+    if (!boyList) return;
+    
+    boyList.innerHTML = '';
+    if (girlList) girlList.innerHTML = '';
+    
+    let hasPending = false;
+
+    rHistory.forEach(row => {
+        if (!row.fulfilled) {
+            hasPending = true;
             const date = new Date(row.created_at).toLocaleString('zh-CN', {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'});
-            list.innerHTML += '<li style="padding: 10px 0; border-bottom: 1px dashed rgba(0,0,0,0.1);">' +
-                '<span style="color:var(--danger);">[' + date + ']</span> 兑换了 🎁 <strong>' + row.reward_name + '</strong> (花费 ' + row.cost + ' 积分)' +
-            '</li>';
-        });
-    } else {
-        list.innerHTML = '<li style="padding: 10px 0; border-bottom: 1px dashed rgba(0,0,0,0.1);">暂无兑换记录</li>';
+            
+            const liBoy = document.createElement('li');
+            liBoy.style.cssText = "padding: 10px 0; border-bottom: 1px dashed rgba(0,0,0,0.1); display:flex; justify-content:space-between; align-items:center;";
+            liBoy.innerHTML = `
+                <div><span style="color:var(--danger);">[${date}]</span> 🎁 <strong>${row.reward_name}</strong></div>
+                <button class="btn primary sm" style="padding: 5px 15px; font-size: 0.85rem;" onclick="fulfillReward('${row.created_at}')">✔️ 满足她</button>
+            `;
+            boyList.appendChild(liBoy);
+            
+            if (girlList) {
+                const liGirl = document.createElement('li');
+                liGirl.style.cssText = "padding: 10px 0; border-bottom: 1px dashed rgba(0,0,0,0.1);";
+                liGirl.innerHTML = `<span style="color:var(--danger);">[${date}]</span> 🎁 <strong>${row.reward_name}</strong> <span style="font-size:0.85rem; color:#6c5ce7; float:right; background:rgba(108,92,231,0.1); padding:2px 8px; border-radius:10px;">⌛ 待他兑现</span>`;
+                girlList.appendChild(liGirl);
+            }
+        }
+    });
+
+    if (!hasPending) {
+        boyList.innerHTML = '<li style="padding: 10px 0; border-bottom: 1px dashed rgba(0,0,0,0.1);">暂无待满足的心愿</li>';
+        if (girlList) girlList.innerHTML = '<li style="padding: 10px 0; border-bottom: 1px dashed rgba(0,0,0,0.1);">空空如也，快去兑换吧！</li>';
+    }
+}
+
+window.fulfillReward = function(createdAt) {
+    if (currentRole !== 'boy') return;
+    const idx = rewardHistory.findIndex(r => r.created_at === createdAt);
+    if (idx !== -1) {
+        const rewardName = rewardHistory[idx].reward_name;
+        rewardHistory.splice(idx, 1); // 满足后直接从列表消除
+        SafeStorage.setItem('rewardHistory', JSON.stringify(rewardHistory));
+        publishState('💖 已满足她的心愿：' + rewardName);
+        renderRewardHistoryUI(rewardHistory);
+        showToast('已标记为满足！');
     }
 }
 
@@ -1011,10 +1119,26 @@ document.querySelectorAll('.cheer-btns button').forEach(btn => {
     btn.addEventListener('click', (e) => {
         if (currentRole !== 'boy') return;
         const actionText = e.target.innerText;
-        broadcastToAll({ type: 'CHEER', action: actionText });
+        broadcastEvent({ type: 'CHEER', action: actionText });
         showToast("发送成功！");
     });
 });
+
+const customCheerBtn = document.getElementById('custom-cheer-btn');
+if (customCheerBtn) {
+    customCheerBtn.addEventListener('click', () => {
+        if (currentRole !== 'boy') return;
+        const input = document.getElementById('custom-cheer-input');
+        const text = input.value.trim();
+        if (!text) {
+            showToast('鼓励语不能为空哦~');
+            return;
+        }
+        broadcastEvent({ type: 'CHEER', action: '💌 ' + text });
+        showToast("发送成功！");
+        input.value = '';
+    });
+}
 
 
 // ==========================================
@@ -1066,7 +1190,7 @@ navBtns.forEach(btn => {
                 renderDashboard(studyHistory, rewardHistory);
             }, 100);
             
-            broadcastToAll({ type: 'REQ_SYNC' });
+            broadcastEvent({ type: 'REQ_SYNC' });
         }
     });
 });
@@ -1124,12 +1248,122 @@ if (saveReviewBtn) {
         }));
         
         showToast('✅ 复盘已保存！明天继续加油~');
-        broadcastFullSync();
+        if (currentRole === 'girl') {
+            publishState();
+        }
         
         // Reset form
         currentRating = 0;
         stars.forEach(s => s.classList.remove('active'));
         document.getElementById('daily-note').value = '';
+    });
+}
+
+// ==========================================
+// 8. Guardian Admin Logic (Boy Only)
+// ==========================================
+const adminPointBtn = document.getElementById('admin-point-btn');
+if (adminPointBtn) {
+    adminPointBtn.addEventListener('click', () => {
+        if (currentRole !== 'boy') return;
+        const deltaInput = document.getElementById('admin-point-delta');
+        const delta = parseInt(deltaInput.value);
+        if (isNaN(delta) || delta === 0) {
+            showToast('请输入有效的调整分数值！');
+            return;
+        }
+        
+        currentPoints += delta;
+        if (currentPoints < 0) currentPoints = 0;
+        
+        SafeStorage.setItem('totalPoints', currentPoints);
+        document.getElementById('points-display').innerText = currentPoints;
+        deltaInput.value = '';
+        
+        const actionMsg = delta > 0 ? ('【奖励】守护者为你增加了 ' + delta + ' 积分！') : ('【惩罚】守护者扣除了你 ' + Math.abs(delta) + ' 积分！');
+        showToast('✅ 积分调整成功！');
+        
+        // 强制发布新状态覆盖云端
+        publishState(actionMsg);
+    });
+}
+
+const adminRewardBtn = document.getElementById('admin-reward-btn');
+
+// 支持直接粘贴截图/图片文件，自动压缩为 Base64
+const adminRewardIconInput = document.getElementById('admin-reward-icon');
+if (adminRewardIconInput) {
+    adminRewardIconInput.addEventListener('paste', function(e) {
+        const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+        for (let index in items) {
+            const item = items[index];
+            if (item.kind === 'file' && item.type.startsWith('image/')) {
+                e.preventDefault();
+                const blob = item.getAsFile();
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    const img = new Image();
+                    img.onload = function() {
+                        // 压缩图片到最大 200px
+                        const canvas = document.createElement('canvas');
+                        const MAX_SIZE = 200;
+                        let width = img.width;
+                        let height = img.height;
+                        if (width > height) {
+                            if (width > MAX_SIZE) {
+                                height *= MAX_SIZE / width;
+                                width = MAX_SIZE;
+                            }
+                        } else {
+                            if (height > MAX_SIZE) {
+                                width *= MAX_SIZE / height;
+                                height = MAX_SIZE;
+                            }
+                        }
+                        canvas.width = width;
+                        canvas.height = height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(img, 0, 0, width, height);
+                        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                        adminRewardIconInput.value = dataUrl;
+                        showToast('🖼️ 图片粘贴成功！已自动压缩。');
+                    };
+                    img.src = event.target.result;
+                };
+                reader.readAsDataURL(blob);
+                return; // 只要处理了一张图片就返回
+            }
+        }
+    });
+}
+
+if (adminRewardBtn) {
+    adminRewardBtn.addEventListener('click', () => {
+        if (currentRole !== 'boy') return;
+        const icon = document.getElementById('admin-reward-icon').value.trim() || '🎁';
+        const name = document.getElementById('admin-reward-name').value.trim();
+        const cost = parseInt(document.getElementById('admin-reward-cost').value);
+        
+        if (!name || isNaN(cost) || cost <= 0) {
+            showToast('请填写完整的奖品名称和所需积分！');
+            return;
+        }
+        
+        const existingIndex = currentRewardsConfig.findIndex(r => r.name === name);
+        if (existingIndex >= 0) {
+            currentRewardsConfig[existingIndex].icon = icon;
+            currentRewardsConfig[existingIndex].cost = cost;
+            showToast('✅ 已更新现有奖品：' + name);
+        } else {
+            currentRewardsConfig.push({ name: name, icon: icon, cost: cost });
+            showToast('✅ 成功上架新奖品：' + name);
+        }
+        
+        document.getElementById('admin-reward-name').value = '';
+        document.getElementById('admin-reward-cost').value = '';
+        
+        // 发布 Config 覆盖云端
+        publishConfig(currentRewardsConfig);
     });
 }
 

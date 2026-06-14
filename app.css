@@ -56,6 +56,7 @@ body {
     flex-direction: column;
     gap: 40px;
     background: rgba(255, 255, 255, 0.4);
+    overflow-y: auto;
 }
 
 .profile {
@@ -152,6 +153,7 @@ nav {
     z-index: 10;
     transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
     background: rgba(255, 255, 255, 0.3);
+    overflow-y: auto; /* Fix for overflow content breaking out of the container */
 }
 
 .view-section.hidden {
@@ -253,6 +255,15 @@ nav {
     display: flex;
     align-items: center;
     gap: 10px;
+    outline: none;
+}
+
+.btn:focus-visible, .nav-btn:focus-visible, .role-card:focus-visible {
+    box-shadow: 0 0 0 3px rgba(108, 92, 231, 0.5);
+}
+
+.btn:active {
+    transform: scale(0.95);
 }
 
 .btn.sm {
@@ -261,15 +272,17 @@ nav {
     border-radius: 16px;
 }
 
-.primary {
-    background: var(--accent);
-    box-shadow: 0 8px 20px var(--accent-glow), inset 0 2px 2px rgba(255,255,255,0.2);
+.btn.primary {
+    background: #e84393;
+    color: #fff;
+    border: none;
+    box-shadow: 0 4px 15px rgba(232, 67, 147, 0.3);
 }
 
-.primary:hover {
-    background: var(--accent-hover);
+.btn.primary:hover {
+    background: #d63031;
     transform: translateY(-3px);
-    box-shadow: 0 12px 25px var(--accent-glow), inset 0 2px 2px rgba(255,255,255,0.2);
+    box-shadow: 0 8px 25px rgba(214, 48, 49, 0.4);
 }
 
 .secondary {
@@ -453,8 +466,8 @@ nav {
     }
     
     .view-section {
-        padding: 30px 20px;
-        border-radius: 0;
+        padding: 30px 20px 100px 20px;
+        border-radius: 30px 30px 0 0;
         border: none;
         background: transparent;
         box-shadow: none;
