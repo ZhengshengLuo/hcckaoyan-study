@@ -467,7 +467,7 @@ nav {
     }
     
     .view-section {
-        padding: 30px 20px 100px 20px;
+        padding: 30px 20px 20px 20px;
         border-radius: 30px 30px 0 0;
         border: none;
         background: transparent;
@@ -476,6 +476,27 @@ nav {
     
     .view-header h2 {
         font-size: 1.5rem;
+    }
+    
+    /* Optimize reward cards for mobile to save space */
+    .rewards-grid {
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 15px;
+    }
+    .reward-card {
+        padding: 15px;
+        gap: 8px;
+    }
+    .reward-icon {
+        font-size: 2.5rem;
+        margin-bottom: 5px;
+    }
+    .reward-card h3 {
+        font-size: 1.1rem;
+    }
+    .reward-card p {
+        font-size: 0.95rem;
+        margin-bottom: 5px;
     }
     
     /* Timer size adjustment */
