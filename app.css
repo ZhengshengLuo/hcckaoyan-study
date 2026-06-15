@@ -362,8 +362,8 @@ nav {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 30px;
-    overflow-y: auto;
     padding-right: 10px;
+    min-height: min-content;
 }
 .rewards-grid::-webkit-scrollbar { width: 6px; }
 .rewards-grid::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
