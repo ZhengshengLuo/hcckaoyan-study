@@ -409,6 +409,14 @@ function publishConfig(rewardsArray) {
         type: 'SYNC_CONFIG',
         rewards: rewardsArray
     };
+    
+    // Check payload size to prevent EMQX rejection
+    const payloadStr = JSON.stringify(msg);
+    if (payloadStr.length > 50000) {
+        showToast('⚠️ 警告：上架的图片太大或商品过多，无法同步到云端！请重新上架较小的图片。');
+        return;
+    }
+    
     localBroadcast(msg);
     mqttPublish(TOPIC_CONFIG, msg, true); // RETAIN = TRUE
 }
@@ -916,15 +924,15 @@ function renderRewardsFromConfig(rewardsArray) {
     
     grid.innerHTML = '';
     rewardsArray.forEach(reward => {
-        let iconHtml = reward.icon;
+        let iconHtml = reward.icon || '🎁';
         
         // Parse markdown image: ![alt](url)
-        const mdMatch = reward.icon.match(/!\[.*?\]\((.*?)\)/);
+        const mdMatch = String(iconHtml).match(/!\[.*?\]\((.*?)\)/);
         let iconUrl = mdMatch ? mdMatch[1] : null;
         
         // Or direct URL
-        if (!iconUrl && (reward.icon.startsWith('http') || reward.icon.startsWith('data:image') || reward.icon.startsWith('/'))) {
-            iconUrl = reward.icon;
+        if (!iconUrl && (String(iconHtml).startsWith('http') || String(iconHtml).startsWith('data:image') || String(iconHtml).startsWith('/'))) {
+            iconUrl = iconHtml;
         }
 
         if (iconUrl) {
@@ -1503,9 +1511,9 @@ if (adminRewardIconInput) {
                 reader.onload = function(event) {
                     const img = new Image();
                     img.onload = function() {
-                        // 压缩图片到最大 200px
+                        // 压缩图片到极小尺寸以防MQTT payload过大被拒
                         const canvas = document.createElement('canvas');
-                        const MAX_SIZE = 200;
+                        const MAX_SIZE = 80;
                         let width = img.width;
                         let height = img.height;
                         if (width > height) {
@@ -1523,9 +1531,9 @@ if (adminRewardIconInput) {
                         canvas.height = height;
                         const ctx = canvas.getContext('2d');
                         ctx.drawImage(img, 0, 0, width, height);
-                        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+                        const dataUrl = canvas.toDataURL('image/jpeg', 0.5);
                         adminRewardIconInput.value = dataUrl;
-                        showToast('🖼️ 图片粘贴成功！已自动压缩。');
+                        showToast('🖼️ 图片处理成功！');
                     };
                     img.src = event.target.result;
                 };
