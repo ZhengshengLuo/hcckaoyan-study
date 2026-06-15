@@ -276,6 +276,8 @@ function initAllChannels() {
     }
 }
 
+const APP_INSTANCE_ID = Math.random().toString(36).substr(2, 9);
+
 // --- Unified message handler ---
 function handleIncomingMessage(msg, topic) {
     // Both roles can receive config updates
@@ -293,6 +295,16 @@ function handleIncomingMessage(msg, topic) {
     }
 
     if (currentRole === 'girl') {
+        if (msg.type === 'GIRL_LOGIN' && msg.instanceId !== APP_INSTANCE_ID) {
+            if (isRunning && secondsElapsed >= 60) {
+                // Auto stop to save points before destroying UI
+                stopBtn.click();
+            }
+            clearInterval(timerInterval);
+            document.body.innerHTML = '<div style="padding: 50px; text-align: center; color: white;"><h2>⚠️ 账号冲突</h2><p>系统检测到你在其他设备或网页打开了专属空间。<br>为防止时间冲突，当前页面已自动结算并停用。</p><button onclick="location.reload()" style="padding: 10px 20px; border-radius: 20px; border: none; background: #ff6b81; color: white; margin-top: 20px;">重新加载</button></div>';
+            return;
+        }
+
         if (msg.type === 'CHEER') {
             showToast("💌 守护者向你发送了：" + msg.action);
         } else if (msg.type === 'SYNC_DATA') {
@@ -313,6 +325,11 @@ function handleIncomingMessage(msg, topic) {
             if(msg.actionMsg) showToast(msg.actionMsg);
         }
     } else if (currentRole === 'boy') {
+        if (msg.type === 'BOY_LOGIN' && msg.instanceId !== APP_INSTANCE_ID) {
+            document.body.innerHTML = '<div style="padding: 50px; text-align: center; color: white;"><h2>⚠️ 账号冲突</h2><p>守护者已在其他设备或网页上线，当前页面已停用。</p><button onclick="location.reload()" style="padding: 10px 20px; border-radius: 20px; border: none; background: #a29bfe; color: white; margin-top: 20px;">重新加载</button></div>';
+            return;
+        }
+
         if (msg.type === 'SYNC_DATA') {
             currentPoints = msg.points;
             studyHistory = msg.studyHistory;
