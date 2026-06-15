@@ -380,21 +380,36 @@ function broadcastStatus(statusName) {
     }
 }
 
+let remoteSyncInterval = null;
+let remoteCurrentSecs = 0;
+let remoteCurrentSubject = '';
+
 function updateRemoteStatus(statusStr) {
     const statusSpan = document.getElementById('remote-status');
     const pulse = document.querySelector('.pulse');
     if (!statusSpan || !pulse) return;
     
+    clearInterval(remoteSyncInterval);
+
     if (statusStr && statusStr.startsWith('studying:')) {
         const parts = statusStr.split('|');
-        let timeText = "";
-        if (parts.length > 1) {
-            const secs = parseInt(parts[1]);
-            const m = Math.floor(secs / 60);
-            const s = secs % 60;
-            timeText = ` (已专注: ${m}分${s}秒)`;
+        remoteCurrentSubject = parts[0].replace('studying: ', '');
+        remoteCurrentSecs = parts.length > 1 ? parseInt(parts[1]) : 0;
+
+        function renderSecs() {
+            const m = Math.floor(remoteCurrentSecs / 60);
+            const s = remoteCurrentSecs % 60;
+            statusSpan.innerText = `📝 正在拼命学习：${remoteCurrentSubject} (已专注: ${m}分${s}秒)`;
         }
-        statusSpan.innerText = "📝 正在拼命学习：" + parts[0].replace('studying: ', '') + timeText;
+        
+        renderSecs();
+        
+        // Auto-tick locally so the boy's UI doesn't freeze when girl's browser suspends
+        remoteSyncInterval = setInterval(() => {
+            remoteCurrentSecs++;
+            renderSecs();
+        }, 1000);
+
         pulse.style.animation = "breathe 1s infinite alternate";
         pulse.style.transform = "scale(1.2)";
     } else if (statusStr && statusStr.includes('paused')) {
@@ -718,7 +733,10 @@ startBtn.addEventListener('click', () => {
     timerInterval = setInterval(() => {
         secondsElapsed = Math.floor((Date.now() - startTime) / 1000);
         updateDisplay();
-        if (secondsElapsed % 3 === 0) {
+        
+        // Use time difference instead of modulo to prevent missed ticks when backgrounded
+        if (Date.now() - lastBroadcastTime >= 3000) {
+            lastBroadcastTime = Date.now();
             const subjectName = subjectSelect.options[subjectSelect.selectedIndex].text;
             broadcastStatus('studying: ' + subjectName + '|' + secondsElapsed);
         }
