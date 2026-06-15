@@ -1420,11 +1420,22 @@ if (adminPointBtn) {
     adminPointBtn.addEventListener('click', () => {
         if (currentRole !== 'boy') return;
         const deltaInput = document.getElementById('admin-point-delta');
-        const delta = parseInt(deltaInput.value);
+        let diffStr = deltaInput.value.trim();
+        
+        // If empty, prompt them
+        if (!diffStr) {
+            diffStr = prompt("要增减多少积分？(例如输入 50 表示奖励50分，输入 -30 表示扣除30分)", "0");
+            if (!diffStr) return;
+        }
+        
+        const delta = parseInt(diffStr);
         if (isNaN(delta) || delta === 0) {
             showToast('请输入有效的调整分数值！');
             return;
         }
+        
+        let reason = prompt("请输入增减积分的理由（这会在她的积分账单里显示）：", "守护者手动操作");
+        if (!reason) reason = "守护者手动操作";
         
         currentPoints += delta;
         if (currentPoints < 0) currentPoints = 0;
@@ -1433,7 +1444,9 @@ if (adminPointBtn) {
         document.getElementById('points-display').innerText = currentPoints;
         deltaInput.value = '';
         
-        const actionMsg = delta > 0 ? ('【奖励】守护者为你增加了 ' + delta + ' 积分！') : ('【惩罚】守护者扣除了你 ' + Math.abs(delta) + ' 积分！');
+        addPointHistory(delta, reason);
+        
+        const actionMsg = delta > 0 ? ('【奖励】' + reason + ' (+' + delta + ')') : ('【惩罚】' + reason + ' (' + delta + ')');
         showToast('✅ 积分调整成功！');
         
         // 强制发布新状态覆盖云端
