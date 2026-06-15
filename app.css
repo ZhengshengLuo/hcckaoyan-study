@@ -462,7 +462,8 @@ nav {
     /* Main Content takes up upper part */
     .main-content {
         flex: 1;
-        height: calc(100vh - 80px);
+        height: calc(100vh - 140px); /* Adjust for top profile and bottom nav */
+        margin-top: 60px;
     }
     
     .view-section {
@@ -507,7 +508,38 @@ nav {
     }
     
     .profile {
-        display: none; /* Hide profile on phone nav */
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 60px;
+        padding: 0 20px;
+        background: rgba(15, 23, 42, 0.85);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        z-index: 50;
+        border-bottom: 1px solid rgba(255,255,255,0.1);
+        box-sizing: border-box;
+    }
+    
+    .profile .avatar {
+        width: 35px;
+        height: 35px;
+        margin-bottom: 0;
+        margin-right: 10px;
+    }
+    
+    .profile .greeting {
+        display: none; /* Hide greeting to save space on mobile */
+    }
+    
+    .profile .points {
+        font-size: 1.1rem;
+        margin-top: 0;
     }
     
     nav {

@@ -99,6 +99,8 @@ function applyRoleConstraints() {
     
     // Re-render rewards to apply role-specific buttons (delete vs redeem)
     renderRewardsFromConfig(currentRewardsConfig);
+    renderRewardHistoryUI(rewardHistory);
+    renderPointHistoryUI();
 }
 
 // ==========================================
@@ -111,7 +113,14 @@ function applyRoleConstraints() {
 let currentPoints = parseInt(SafeStorage.getItem('totalPoints') || '120');
 let studyHistory = JSON.parse(SafeStorage.getItem('studyHistory') || '[]');
 let rewardHistory = JSON.parse(SafeStorage.getItem('rewardHistory') || '[]');
+let pointHistory = JSON.parse(SafeStorage.getItem('pointHistory') || '[]');
 let currentTimerState = SafeStorage.getItem('currentTimerState') || '休息中';
+
+// Initial tech compensation record if empty
+if (pointHistory.length === 0) {
+    pointHistory.push({ change: +120, reason: "初始发放：技术补偿", date: new Date().toISOString() });
+    SafeStorage.setItem('pointHistory', JSON.stringify(pointHistory));
+}
 
 document.getElementById('points-display').innerText = currentPoints;
 
@@ -324,6 +333,14 @@ function handleIncomingMessage(msg, topic) {
                     renderRewardHistoryUI(rewardHistory);
                 }
             }
+            
+            if (msg.pointHistory) {
+                pointHistory = msg.pointHistory;
+                SafeStorage.setItem('pointHistory', JSON.stringify(pointHistory));
+                if (typeof renderPointHistoryUI === 'function') {
+                    renderPointHistoryUI();
+                }
+            }
 
             if(msg.actionMsg) showToast(msg.actionMsg);
         }
@@ -337,16 +354,25 @@ function handleIncomingMessage(msg, topic) {
             currentPoints = msg.points;
             studyHistory = msg.studyHistory;
             rewardHistory = msg.rewardHistory;
+            if (msg.pointHistory) pointHistory = msg.pointHistory;
             currentTimerState = msg.status;
             
             SafeStorage.setItem('totalPoints', currentPoints);
             SafeStorage.setItem('studyHistory', JSON.stringify(studyHistory));
             SafeStorage.setItem('rewardHistory', JSON.stringify(rewardHistory));
+            SafeStorage.setItem('pointHistory', JSON.stringify(pointHistory));
             SafeStorage.setItem('currentTimerState', currentTimerState);
             
             document.getElementById('points-display').innerText = currentPoints;
             updateRemoteStatus(msg.status);
             renderDashboard(studyHistory, rewardHistory);
+            
+            if (typeof renderRewardHistoryUI === 'function') renderRewardHistoryUI(rewardHistory);
+            if (typeof renderPointHistoryUI === 'function') renderPointHistoryUI();
+            
+            if (msg.actionMsg && !msg.actionMsg.includes('验证')) {
+                showToast(msg.actionMsg);
+            }
             
         } else if (msg.type === 'STATUS_CHANGE') {
             const oldBase = (currentTimerState || '').split('|')[0];
@@ -370,6 +396,7 @@ function publishState(actionMsg = null) {
         points: currentPoints,
         studyHistory: studyHistory,
         rewardHistory: rewardHistory,
+        pointHistory: pointHistory,
         status: currentTimerState,
         actionMsg: actionMsg
     };
@@ -609,6 +636,7 @@ function handleQuizFail() {
         if (currentPoints < 0) currentPoints = 0;
         SafeStorage.setItem('totalPoints', currentPoints);
         document.getElementById('points-display').innerText = currentPoints;
+        addPointHistory(-10, "系统惩罚：未通过防作弊验证");
         
         // 强制停止计时并结算
         stopBtn.click();
@@ -745,6 +773,9 @@ subjectSelect.addEventListener('change', () => {
             // Truncate history to prevent localStorage exhaustion
             if (studyHistory.length > 500) studyHistory = studyHistory.slice(0, 500);
             SafeStorage.setItem('studyHistory', JSON.stringify(studyHistory));
+            
+            addPointHistory(earnedMinutes, "专注学习：" + prevSubjectName);
+            
             showToast('📝 已保存 ' + prevSubjectName + ' ' + earnedMinutes + ' 分钟，切换到新科目');
             publishState();
         } else {
@@ -833,6 +864,8 @@ stopBtn.addEventListener('click', () => {
             created_at: new Date().toISOString()
         });
         SafeStorage.setItem('studyHistory', JSON.stringify(studyHistory));
+        
+        addPointHistory(earnedPoints, "专注学习：" + subjectName);
         
         showToast('真棒！本次专注获得 ' + earnedPoints + ' 积分！');
         
@@ -944,6 +977,8 @@ function renderRewardsFromConfig(rewardsArray) {
                     fulfilled: false
                 });
                 SafeStorage.setItem('rewardHistory', JSON.stringify(rewardHistory));
+                
+                addPointHistory(-reward.cost, "兑换心愿：" + reward.name);
                 
                 showToast('🎉 兑换成功！已经放入小金库等待他兑现啦~');
                 
@@ -1137,6 +1172,34 @@ function renderDashboard(sHistory, rHistory) {
 
     // Update reward history list for both Boy and Girl
     renderRewardHistoryUI(rHistory);
+    renderPointHistoryUI();
+}
+
+function renderPointHistoryUI() {
+    const girlPointList = document.getElementById('girl-point-history-list');
+    const boyPointList = document.getElementById('boy-point-history-list');
+    
+    const htmlLines = pointHistory.map(row => {
+        const date = new Date(row.date).toLocaleString('zh-CN', {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'});
+        const sign = row.change > 0 ? '+' : '';
+        const color = row.change > 0 ? '#1dd1a1' : '#ff6b81';
+        return `<li style="padding: 10px 0; border-bottom: 1px dashed rgba(0,0,0,0.1); display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; flex-direction:column; gap:3px;">
+                <span style="color: #2d3436; font-weight: 500;">${row.reason}</span>
+                <span style="font-size: 0.75rem; color: #a0a0a0;">${date}</span>
+            </div>
+            <span style="font-weight:bold; font-size:1.1rem; color: ${color};">${sign}${row.change}</span>
+        </li>`;
+    }).join('');
+
+    const emptyMsg = '<li style="padding: 10px 0; border-bottom: 1px dashed rgba(0,0,0,0.1);">暂无积分记录</li>';
+    
+    if (girlPointList) {
+        girlPointList.innerHTML = pointHistory.length > 0 ? htmlLines : emptyMsg;
+    }
+    if (boyPointList) {
+        boyPointList.innerHTML = pointHistory.length > 0 ? htmlLines : emptyMsg;
+    }
 }
 
 function renderRewardHistoryUI(rHistory) {
@@ -1258,6 +1321,7 @@ navBtns.forEach(btn => {
             currentPoints = parseInt(SafeStorage.getItem('totalPoints') || '120');
             studyHistory = JSON.parse(SafeStorage.getItem('studyHistory') || '[]');
             rewardHistory = JSON.parse(SafeStorage.getItem('rewardHistory') || '[]');
+            pointHistory = JSON.parse(SafeStorage.getItem('pointHistory') || '[]');
             currentTimerState = SafeStorage.getItem('currentTimerState') || '休息中';
             document.getElementById('points-display').innerText = currentPoints;
             updateRemoteStatus(currentTimerState);
@@ -1333,6 +1397,19 @@ if (saveReviewBtn) {
         stars.forEach(s => s.classList.remove('active'));
         document.getElementById('daily-note').value = '';
     });
+}
+
+// --- Point History Helper ---
+function addPointHistory(changeInt, reasonStr) {
+    if (changeInt === 0) return;
+    pointHistory.unshift({
+        change: changeInt,
+        reason: reasonStr,
+        date: new Date().toISOString()
+    });
+    if (pointHistory.length > 200) pointHistory = pointHistory.slice(0, 200);
+    SafeStorage.setItem('pointHistory', JSON.stringify(pointHistory));
+    renderPointHistoryUI();
 }
 
 // ==========================================
