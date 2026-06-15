@@ -892,9 +892,14 @@ stopBtn.addEventListener('click', () => {
 // ==========================================
 // 4. Rewards Logic
 // ==========================================
-let currentRewardsConfig = JSON.parse(SafeStorage.getItem('rewardsConfig') || '[]');
-if (currentRewardsConfig.length === 0) {
-    currentRewardsConfig = [];
+let currentRewardsConfig = JSON.parse(SafeStorage.getItem('rewardsConfig') || 'null');
+if (!currentRewardsConfig) {
+    currentRewardsConfig = [
+        { id: "default_1", icon: "🍔", name: "一顿大餐", cost: 500 },
+        { id: "default_2", icon: "💆‍♀️", name: "揉肩半小时", cost: 150 },
+        { id: "default_3", icon: "🛒", name: "清空一件购物车", cost: 2000 }
+    ];
+    SafeStorage.setItem('rewardsConfig', JSON.stringify(currentRewardsConfig));
 }
 
 function renderRewardsFromConfig(rewardsArray) {
@@ -1460,16 +1465,25 @@ if (adminPointBtn) {
     if (adminResetBtn) {
         adminResetBtn.addEventListener('click', () => {
             if (currentRole !== 'boy') return;
-            if (confirm('💣 危险操作确认 💣\n\n你确定要清空全站所有数据吗？\n包括积分、所有学习记录、心愿池和上架的商品！\n如果聪聪在线，她的数据也会被强制清空！\n\n确认吗？')) {
+            if (confirm('💣 危险操作确认 💣\n\n你确定要清空全站所有数据吗？\n包括积分、所有学习记录和心愿池！\n(如果此时聪聪在线，她的数据也会被强制清空！)\n\n确认吗？')) {
                 // Clear own local storage
                 ['totalPoints', 'studyHistory', 'rewardHistory', 'pointHistory', 'currentTimerState', 'rewardsConfig'].forEach(key => SafeStorage.removeItem(key));
+                
+                const defaultRewards = [
+                    { id: "default_1", icon: "🍔", name: "一顿大餐", cost: 500 },
+                    { id: "default_2", icon: "💆‍♀️", name: "揉肩半小时", cost: 150 },
+                    { id: "default_3", icon: "🛒", name: "清空一件购物车", cost: 2000 }
+                ];
+                
                 // Broadcast reset event to everyone else
                 const msg = { type: 'RESET_SYSTEM' };
                 mqttPublish(TOPIC_EVENTS, msg, false); // Send it live
-                // Clear retained state for the girl by sending an empty config and empty state
-                mqttPublish(TOPIC_CONFIG, { type: 'SYNC_CONFIG', rewards: [] }, true);
+                
+                // Set default config
+                mqttPublish(TOPIC_CONFIG, { type: 'SYNC_CONFIG', rewards: defaultRewards }, true);
+                
                 // Reload self
-                alert('全站数据已清空。');
+                alert('全站数据已重置为初始状态。');
                 location.reload();
             }
         });
