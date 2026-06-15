@@ -492,6 +492,25 @@ const stopBtn = document.getElementById('stop-btn');
 const subjectSelect = document.getElementById('subject-select');
 
 // Quiz Logic
+let _quizQueued = false;
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && currentRole === 'girl') {
+        // Recalculate time if it's currently running (to fix lag upon unlock)
+        if (isRunning) {
+            secondsElapsed = Math.floor((Date.now() - startTime) / 1000);
+            updateDisplay();
+            const subjectName = subjectSelect.options[subjectSelect.selectedIndex].text;
+            broadcastStatus('studying: ' + subjectName + '|' + secondsElapsed);
+        }
+        
+        // Trigger queued quiz immediately upon waking up
+        if (_quizQueued) {
+            _quizQueued = false;
+            showQuiz();
+        }
+    }
+});
+
 function scheduleNextQuiz() {
     clearTimeout(quizScheduleTimeout);
     if (!isRunning) return;
@@ -506,6 +525,11 @@ function scheduleNextQuiz() {
 }
 
 function showQuiz() {
+    if (document.hidden) {
+        _quizQueued = true;
+        return;
+    }
+
     document.getElementById('quiz-overlay').style.display = 'flex';
     
     let timeLeft = 30;
@@ -605,7 +629,8 @@ function saveTimerState() {
         startTime: startTime,
         secondsElapsed: secondsElapsed,
         pausedAt: !isRunning ? Date.now() : null,
-        subjectIndex: subjectSelect.selectedIndex
+        subjectIndex: subjectSelect.selectedIndex,
+        lastVerifiedSeconds: lastVerifiedSeconds
     }));
 }
 
@@ -620,10 +645,17 @@ function restoreTimerState() {
                 subjectSelect.selectedIndex = savedState.subjectIndex;
                 _lastKnownSubject = subjectSelect.options[subjectSelect.selectedIndex].text;
             }
+            if (savedState.lastVerifiedSeconds !== undefined) {
+                lastVerifiedSeconds = savedState.lastVerifiedSeconds;
+            } else {
+                lastVerifiedSeconds = 0;
+            }
+
             if (savedState.isRunning && savedState.startTime) {
-                // Was running when page closed — resume with correct elapsed time
+                // Was running when page closed — resume with correct elapsed time using absolute startTime
                 isRunning = true;
-                startTime = Date.now() - (savedState.secondsElapsed * 1000);
+                startTime = savedState.startTime;
+                secondsElapsed = Math.floor((Date.now() - startTime) / 1000);
                 
                 timerInterval = setInterval(timerTick, 1000);
 
@@ -660,8 +692,8 @@ let _lastKnownSubject = subjectSelect.options[subjectSelect.selectedIndex].text;
 function timerTick() {
     secondsElapsed = Math.floor((Date.now() - startTime) / 1000);
     updateDisplay();
-    if (secondsElapsed - lastBroadcastTime >= 3) {
-        lastBroadcastTime = secondsElapsed;
+    if (Date.now() - lastBroadcastTime >= 3000) {
+        lastBroadcastTime = Date.now();
         const subjectName = subjectSelect.options[subjectSelect.selectedIndex].text;
         broadcastStatus('studying: ' + subjectName + '|' + secondsElapsed);
     }
@@ -730,17 +762,7 @@ startBtn.addEventListener('click', () => {
     startTime = Date.now() - (secondsElapsed * 1000);
     lastVerifiedSeconds = secondsElapsed; // 启动/恢复时重置验证基准
     
-    timerInterval = setInterval(() => {
-        secondsElapsed = Math.floor((Date.now() - startTime) / 1000);
-        updateDisplay();
-        
-        // Use time difference instead of modulo to prevent missed ticks when backgrounded
-        if (Date.now() - lastBroadcastTime >= 3000) {
-            lastBroadcastTime = Date.now();
-            const subjectName = subjectSelect.options[subjectSelect.selectedIndex].text;
-            broadcastStatus('studying: ' + subjectName + '|' + secondsElapsed);
-        }
-    }, 1000);
+    timerInterval = setInterval(timerTick, 1000);
 
     startBtn.classList.add('hidden');
     pauseBtn.classList.remove('hidden');
