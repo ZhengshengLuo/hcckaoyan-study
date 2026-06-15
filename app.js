@@ -81,15 +81,18 @@ function applyRoleConstraints() {
     const avatarImg = document.getElementById('sidebar-avatar');
     const nameText = document.getElementById('sidebar-name');
     
+    // Init girl/boy layout
+    document.getElementById('role-selection').style.display = 'none';
     if (currentRole === 'girl') {
+        document.getElementById('girl-view').style.display = 'block';
+        restoreTimerState();
         avatarImg.src = "./melody.png";
         avatarImg.style.borderColor = "#ffb7c5";
         avatarImg.style.backgroundColor = "#ffe6f2";
         nameText.innerText = "☁️ 随心学习中...";
         document.querySelector('.nav-btn[data-target="timer-view"]').click();
-        // Bug #3 fix: restore timer state AFTER role is set
-        restoreTimerState();
     } else if (currentRole === 'boy') {
+        document.getElementById('boy-view').style.display = 'block';
         avatarImg.src = "./kuromi.png";
         avatarImg.style.borderColor = "#a29bfe";
         avatarImg.style.backgroundColor = "#e6e6fa";
@@ -156,6 +159,7 @@ const SECRET_BASE_TOPIC = "cspin_study_hcc_zsl_8f9a2b_v2";
 const TOPIC_STATE = SECRET_BASE_TOPIC + "/state";
 const TOPIC_CONFIG = SECRET_BASE_TOPIC + "/config";
 const TOPIC_EVENTS = SECRET_BASE_TOPIC + "/events";
+const TOPIC_TIMER_SYNC = SECRET_BASE_TOPIC + "/timer_sync";
 
 let mqttClient = null;
 let mqttClientId = null;
@@ -216,6 +220,7 @@ function initMQTT(brokerIndex) {
         mqttClient.subscribe(TOPIC_STATE);
         mqttClient.subscribe(TOPIC_CONFIG);
         mqttClient.subscribe(TOPIC_EVENTS);
+        mqttClient.subscribe(TOPIC_TIMER_SYNC);
         
         if (currentRole === 'girl') {
             publishState();
@@ -295,13 +300,42 @@ function handleIncomingMessage(msg, topic) {
     }
 
     if (currentRole === 'girl') {
-        if (msg.type === 'GIRL_LOGIN' && msg.instanceId !== APP_INSTANCE_ID) {
-            if (isRunning && secondsElapsed >= 60) {
-                // Auto stop to save points before destroying UI
-                stopBtn.click();
+        if (msg.type === 'TIMER_SYNC') {
+            if (msg.fromInstance === APP_INSTANCE_ID) return;
+            
+            // Sync local state
+            isRunning = msg.isRunning;
+            startTime = msg.startTime;
+            secondsElapsed = msg.secondsElapsed;
+            lastVerifiedSeconds = msg.lastVerifiedSeconds;
+            
+            if (msg.subjectIndex !== undefined) {
+                subjectSelect.selectedIndex = msg.subjectIndex;
+                _lastKnownSubject = subjectSelect.options[subjectSelect.selectedIndex].text;
             }
+            
             clearInterval(timerInterval);
-            document.body.innerHTML = '<div style="padding: 50px; text-align: center; color: white;"><h2>⚠️ 账号冲突</h2><p>系统检测到你在其他设备或网页打开了专属空间。<br>为防止时间冲突，当前页面已自动结算并停用。</p><button onclick="location.reload()" style="padding: 10px 20px; border-radius: 20px; border: none; background: #ff6b81; color: white; margin-top: 20px;">重新加载</button></div>';
+            
+            if (isRunning) {
+                secondsElapsed = Math.floor((Date.now() - startTime) / 1000);
+                timerInterval = setInterval(timerTick, 1000);
+                
+                startBtn.classList.add('hidden');
+                pauseBtn.classList.remove('hidden');
+                stopBtn.classList.remove('hidden');
+            } else {
+                if (secondsElapsed > 0) {
+                    startBtn.classList.remove('hidden');
+                    pauseBtn.classList.add('hidden');
+                    stopBtn.classList.remove('hidden');
+                } else {
+                    startBtn.classList.remove('hidden');
+                    pauseBtn.classList.add('hidden');
+                    stopBtn.classList.add('hidden');
+                }
+            }
+            updateDisplay();
+            saveTimerState();
             return;
         }
 
@@ -325,11 +359,6 @@ function handleIncomingMessage(msg, topic) {
             if(msg.actionMsg) showToast(msg.actionMsg);
         }
     } else if (currentRole === 'boy') {
-        if (msg.type === 'BOY_LOGIN' && msg.instanceId !== APP_INSTANCE_ID) {
-            document.body.innerHTML = '<div style="padding: 50px; text-align: center; color: white;"><h2>⚠️ 账号冲突</h2><p>守护者已在其他设备或网页上线，当前页面已停用。</p><button onclick="location.reload()" style="padding: 10px 20px; border-radius: 20px; border: none; background: #a29bfe; color: white; margin-top: 20px;">重新加载</button></div>';
-            return;
-        }
-
         if (msg.type === 'SYNC_DATA') {
             currentPoints = msg.points;
             studyHistory = msg.studyHistory;
@@ -389,6 +418,20 @@ function broadcastEvent(msg) {
 }
 
 // --- Status updates ---
+function publishTimerSync() {
+    if (currentRole !== 'girl') return;
+    const msg = {
+        type: 'TIMER_SYNC',
+        isRunning: isRunning,
+        startTime: startTime,
+        secondsElapsed: secondsElapsed,
+        lastVerifiedSeconds: lastVerifiedSeconds,
+        subjectIndex: subjectSelect.selectedIndex,
+        fromInstance: APP_INSTANCE_ID
+    };
+    mqttPublish(TOPIC_TIMER_SYNC, msg, true); // Retained for instant sync
+}
+
 function broadcastStatus(statusName) {
     currentTimerState = statusName;
     SafeStorage.setItem('currentTimerState', statusName);
@@ -649,6 +692,7 @@ function saveTimerState() {
         subjectIndex: subjectSelect.selectedIndex,
         lastVerifiedSeconds: lastVerifiedSeconds
     }));
+    publishTimerSync();
 }
 
 // Restore timer state on load (called from initRoleUI -> applyRoleConstraints)
@@ -846,6 +890,7 @@ stopBtn.addEventListener('click', () => {
     
     broadcastStatus('stopped');
     SafeStorage.removeItem('girlTimerState');
+    saveTimerState();
     stopAlerts();
     clearTimeout(quizScheduleTimeout);
     clearInterval(quizActiveInterval);
