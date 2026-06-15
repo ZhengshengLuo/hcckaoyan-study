@@ -153,7 +153,12 @@ nav {
     z-index: 10;
     transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
     background: rgba(255, 255, 255, 0.3);
-    overflow-y: auto; /* Fix for overflow content breaking out of the container */
+    overflow-y: auto;
+}
+
+/* Prevent flex children from shrinking and overlapping */
+.view-section > * {
+    flex-shrink: 0;
 }
 
 .view-section.hidden {
